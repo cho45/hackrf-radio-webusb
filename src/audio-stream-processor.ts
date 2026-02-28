@@ -28,7 +28,12 @@ type StatsMessage = {
   inputGapMsPeak: number;
 };
 
-const workletGlobal = globalThis as { sampleRate: number; currentTime: number };
+type WorkletGlobalTiming = {
+  sampleRate: number;
+  currentTime: number;
+};
+
+const workletGlobal = globalThis as unknown as WorkletGlobalTiming;
 
 export class AudioStreamProcessor extends AudioWorkletProcessor {
   private readonly packetQueue = new RecycleTransferReceiver();
