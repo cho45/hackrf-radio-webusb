@@ -33,6 +33,11 @@ fn design_lowpass_coeffs(num_taps: usize, cutoff_norm: f32) -> Vec<f32> {
     coeffs
 }
 
+/// Hamming窓LPF係数設計（他モジュール再利用向け）。
+pub(crate) fn design_lowpass_hamming_coeffs(num_taps: usize, cutoff_norm: f32) -> Vec<f32> {
+    design_lowpass_coeffs(num_taps, cutoff_norm)
+}
+
 fn design_bandpass_coeffs(num_taps: usize, min_norm: f32, max_norm: f32) -> Vec<f32> {
     assert!(num_taps > 0, "num_taps must be > 0");
     assert!(
@@ -63,6 +68,14 @@ pub struct FirFilter {
 /// 実係数を I/Q に同時適用する（I/Q を別々の FirFilter で回すのと等価）。
 pub struct ComplexFirFilter {
     coeffs: Vec<f32>,
+    delay: Vec<Complex<f32>>,
+    pos: usize,
+}
+
+/// 複素係数・複素サンプル向け FIR フィルタ。
+/// 片側帯域抽出のような複素周波数応答が必要な場合に使う。
+pub struct ComplexCoeffFirFilter {
+    coeffs: Vec<Complex<f32>>,
     delay: Vec<Complex<f32>>,
     pos: usize,
 }
@@ -131,6 +144,47 @@ impl ComplexFirFilter {
             let s = self.delay[idx];
             acc_re += h * s.re;
             acc_im += h * s.im;
+            idx = if idx == 0 {
+                self.delay.len() - 1
+            } else {
+                idx - 1
+            };
+        }
+
+        self.pos += 1;
+        if self.pos >= self.delay.len() {
+            self.pos = 0;
+        }
+        Complex::new(acc_re, acc_im)
+    }
+}
+
+impl ComplexCoeffFirFilter {
+    pub fn new(coeffs: Vec<Complex<f32>>) -> Self {
+        assert!(!coeffs.is_empty(), "coeffs must not be empty");
+        let taps = coeffs.len();
+        Self {
+            coeffs,
+            delay: vec![Complex::new(0.0, 0.0); taps],
+            pos: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.delay.fill(Complex::new(0.0, 0.0));
+        self.pos = 0;
+    }
+
+    pub fn process_sample(&mut self, x: Complex<f32>) -> Complex<f32> {
+        self.delay[self.pos] = x;
+
+        let mut acc_re = 0.0f32;
+        let mut acc_im = 0.0f32;
+        let mut idx = self.pos;
+        for &h in &self.coeffs {
+            let s = self.delay[idx];
+            acc_re += h.re * s.re - h.im * s.im;
+            acc_im += h.re * s.im + h.im * s.re;
             idx = if idx == 0 {
                 self.delay.len() - 1
             } else {

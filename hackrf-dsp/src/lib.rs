@@ -16,7 +16,8 @@ use num_complex::Complex;
 use wasm_bindgen::prelude::*;
 
 use crate::demod::{
-    AMDemodulator, FMDemodulator, FMStereoDecoder, FMStereoStats, Nco, FM_STEREO_INTERMEDIATE_RATE_HZ,
+    AMDemodulator, FMDemodulator, FMStereoDecoder, FMStereoStats, Nco, SSBDemodulator, SSBMode,
+    FM_STEREO_INTERMEDIATE_RATE_HZ,
 };
 use crate::fft::FFT;
 use crate::filter::DecimationFilter;
@@ -47,6 +48,11 @@ const FM_STEREO_AUDIO_PATH: AudioPathProfile = AudioPathProfile {
     intermediate_rate_hz: FM_STEREO_INTERMEDIATE_RATE_HZ,
     audio_cutoff_hz: 15_000.0,
 };
+const SSB_AUDIO_PATH: AudioPathProfile = AudioPathProfile {
+    demod_rate_hz: 50_000.0,
+    intermediate_rate_hz: 50_000.0,
+    audio_cutoff_hz: 3_200.0,
+};
 
 const FM_DEEMPHASIS_TAU_US: f32 = 50.0;
 const COARSE_STAGE_RATE: f32 = 1_000_000.0;
@@ -67,6 +73,8 @@ fn log(_s: &str) {}
 enum DemodMode {
     Am,
     Fm,
+    Usb,
+    Lsb,
 }
 
 impl DemodMode {
@@ -74,6 +82,8 @@ impl DemodMode {
         match s.to_ascii_uppercase().as_str() {
             "AM" => Some(Self::Am),
             "FM" => Some(Self::Fm),
+            "USB" => Some(Self::Usb),
+            "LSB" => Some(Self::Lsb),
             _ => None,
         }
     }
@@ -82,6 +92,7 @@ impl DemodMode {
         match self {
             Self::Am => AM_AUDIO_PATH.demod_rate_hz,
             Self::Fm => FM_MONO_AUDIO_PATH.demod_rate_hz,
+            Self::Usb | Self::Lsb => SSB_AUDIO_PATH.demod_rate_hz,
         }
     }
 }
@@ -96,6 +107,7 @@ fn audio_profile_for(mode: DemodMode, fm_stereo_enabled: bool) -> AudioPathProfi
                 FM_MONO_AUDIO_PATH
             }
         }
+        DemodMode::Usb | DemodMode::Lsb => SSB_AUDIO_PATH,
     }
 }
 
@@ -151,6 +163,7 @@ pub struct Receiver {
     am_demod: AMDemodulator,
     fm_demod: FMDemodulator,
     fm_stereo: FMStereoDecoder,
+    ssb_demod: SSBDemodulator,
     resampler: Resampler,
     resampler_right: Resampler,
     fft: FFT,
@@ -353,6 +366,12 @@ impl Receiver {
         let mut fm_demod = FMDemodulator::new(FM_MAX_DEVIATION_HZ, plan.demod_sample_rate);
         fm_demod.set_deemphasis_tau_us(plan.demod_sample_rate, Some(FM_DEEMPHASIS_TAU_US));
         fm_demod.set_deemphasis_enabled(false);
+        let ssb_mode = match mode {
+            DemodMode::Lsb => SSBMode::Lsb,
+            _ => SSBMode::Usb,
+        };
+        let mut ssb_demod = SSBDemodulator::new(plan.demod_sample_rate, ssb_mode);
+        ssb_demod.set_if_band(if_min_hz, if_max_hz);
 
         log(&format!(
             "[Receiver::new] mode={:?} sr={} coarse_factor={} coarse_sr={} demod_factor={} demod_sr={} target_demod_rate={} if=[{},{}]",
@@ -439,6 +458,7 @@ impl Receiver {
             am_demod: AMDemodulator::new(),
             fm_demod,
             fm_stereo,
+            ssb_demod,
             resampler,
             resampler_right,
             fft: FFT::new(fft_size, &window),
@@ -471,6 +491,8 @@ impl Receiver {
             self.fm_demod
                 .set_deemphasis_enabled(!self.fm_stereo_enabled);
             self.fm_stereo.reset();
+        } else if self.mode == DemodMode::Usb || self.mode == DemodMode::Lsb {
+            self.ssb_demod.reset();
         }
     }
 
@@ -491,6 +513,9 @@ impl Receiver {
             self.fm_demod
                 .set_deemphasis_enabled(!self.fm_stereo_enabled);
             self.fm_stereo.reset();
+        } else if self.mode == DemodMode::Usb || self.mode == DemodMode::Lsb {
+            self.ssb_demod.set_if_band(self.if_min_hz, self.if_max_hz);
+            self.ssb_demod.reset();
         }
     }
 
@@ -604,7 +629,7 @@ impl Receiver {
 
     pub fn audio_output_channels(&self) -> usize {
         match self.mode {
-            DemodMode::Am => 1,
+            DemodMode::Am | DemodMode::Usb | DemodMode::Lsb => 1,
             DemodMode::Fm => 2,
         }
     }
@@ -759,10 +784,13 @@ impl Receiver {
             DemodMode::Fm => self
                 .fm_demod
                 .demodulate(&self.demod_iq_buffer, &mut self.demod_buffer),
+            DemodMode::Usb | DemodMode::Lsb => self
+                .ssb_demod
+                .demodulate(&self.demod_iq_buffer, &mut self.demod_buffer),
         }
 
         match self.mode {
-            DemodMode::Am => {
+            DemodMode::Am | DemodMode::Usb | DemodMode::Lsb => {
                 // リサンプリング (demod_rate -> audioCtx.sampleRate)
                 self.audio_buffer.clear();
                 self.audio_buffer.reserve(
@@ -930,6 +958,28 @@ mod tests {
         let num = main.abs().max(1e-9);
         let den = leak.abs().max(1e-9);
         20.0 * (num / den).log10()
+    }
+
+    fn rms(signal: &[f32]) -> f32 {
+        if signal.is_empty() {
+            return 0.0;
+        }
+        let sum2 = signal.iter().map(|x| x * x).sum::<f32>();
+        (sum2 / signal.len() as f32).sqrt()
+    }
+
+    fn make_iq_tone_i8(freq_hz: f32, sample_rate: f32, len: usize, amp: f32) -> Vec<i8> {
+        let scale = (amp * 127.0).clamp(1.0, 127.0);
+        let mut out = Vec::with_capacity(len * 2);
+        for n in 0..len {
+            let t = n as f32 / sample_rate;
+            let phi = 2.0 * std::f32::consts::PI * freq_hz * t;
+            let i = (phi.cos() * scale).round().clamp(-127.0, 127.0) as i8;
+            let q = (phi.sin() * scale).round().clamp(-127.0, 127.0) as i8;
+            out.push(i);
+            out.push(q);
+        }
+        out
     }
 
     #[test]
@@ -1142,6 +1192,64 @@ mod tests {
             sep_n,
             sep_w
         );
+    }
+
+    #[test]
+    fn usb_receiver_smoke_outputs_audio() {
+        let sample_rate = 2_000_000.0f32;
+        let iq = make_iq_tone_i8(1_200.0, sample_rate, 200_000, 0.8);
+        let mut rx = Receiver::new(
+            sample_rate,
+            100_000_000.0,
+            100_000_000.0,
+            "USB",
+            48_000.0,
+            1024,
+            0,
+            1024,
+            300.0,
+            3_000.0,
+            true,
+        );
+        let mut audio = vec![0.0f32; 8192];
+        let mut fft = vec![0.0f32; 1024];
+        let mut all = Vec::new();
+        for chunk in iq.chunks(16_384) {
+            let n = rx.process_into(chunk, &mut audio, &mut fft);
+            all.extend_from_slice(&audio[..n]);
+        }
+        let tail = &all[all.len() / 4..];
+        assert!(rms(tail) > 0.02, "USB output RMS too small");
+        assert_eq!(rx.audio_output_channels(), 1);
+    }
+
+    #[test]
+    fn lsb_receiver_smoke_outputs_audio() {
+        let sample_rate = 2_000_000.0f32;
+        let iq = make_iq_tone_i8(-1_200.0, sample_rate, 200_000, 0.8);
+        let mut rx = Receiver::new(
+            sample_rate,
+            100_000_000.0,
+            100_000_000.0,
+            "LSB",
+            48_000.0,
+            1024,
+            0,
+            1024,
+            300.0,
+            3_000.0,
+            true,
+        );
+        let mut audio = vec![0.0f32; 8192];
+        let mut fft = vec![0.0f32; 1024];
+        let mut all = Vec::new();
+        for chunk in iq.chunks(16_384) {
+            let n = rx.process_into(chunk, &mut audio, &mut fft);
+            all.extend_from_slice(&audio[..n]);
+        }
+        let tail = &all[all.len() / 4..];
+        assert!(rms(tail) > 0.02, "LSB output RMS too small");
+        assert_eq!(rx.audio_output_channels(), 1);
     }
 
     #[cfg(target_arch = "wasm32")]

@@ -5,12 +5,14 @@ use std::arch::wasm32::{f32x4, f32x4_add, f32x4_mul, f32x4_sub, i32x4_shuffle, v
 pub mod am;
 pub mod fm;
 pub mod fm_stereo;
+pub mod ssb;
 
 pub use am::AMDemodulator;
 pub use fm::FMDemodulator;
 pub use fm_stereo::{
     FMStereoDecoder, FMStereoStats, FM_STEREO_INTERMEDIATE_RATE_HZ,
 };
+pub use ssb::{SSBDemodulator, SSBMode};
 
 /// 位相加算ベースのNCO（周波数補正を毎サンプルで加える用途向け）。
 pub struct PhaseNco {
