@@ -44,6 +44,8 @@
             <select v-model="demodMode" @change="onDemodModeChange" style="flex:1; padding:8px 12px; border:1px solid #444; border-radius:4px; background:#222; color:#fff; font-size:14px;">
               <option value="AM">AM</option>
               <option value="FM">FM (WFM)</option>
+              <option value="USB">USB</option>
+              <option value="LSB">LSB</option>
             </select>
           </div>
         </div>
@@ -216,7 +218,9 @@ const rxSampleRateCandidatesHz = [2_000_000, 4_000_000, 8_000_000, 10_000_000, 1
 const ifOffsetHz = 250_000; // target からこの分だけRF centerをずらしてDC回避
 
 const settingsStorageKey = 'radio.settings.v2';
-const isDemodMode = (mode: unknown): mode is 'AM' | 'FM' => mode === 'AM' || mode === 'FM';
+type DemodMode = 'AM' | 'FM' | 'USB' | 'LSB';
+const isDemodMode = (mode: unknown): mode is DemodMode =>
+  mode === 'AM' || mode === 'FM' || mode === 'USB' || mode === 'LSB';
 type PersistedSettings = {
   spanHz: number;
   targetFreq: number;
@@ -227,7 +231,7 @@ type PersistedSettings = {
   antennaEnabled: boolean;
   lnaGain: number;
   vgaGain: number;
-  demodMode: 'AM' | 'FM';
+  demodMode: DemodMode;
 };
 
 const defaultSettings: PersistedSettings = {
@@ -292,8 +296,10 @@ const showDebugInfo = ref(loadedSettings.showDebugInfo);
 const demodMode = ref(loadedSettings.demodMode);
 const settingsOpen = ref(false);
 
-const defaultIfBandForMode = (mode: string): { minHz: number; maxHz: number } => {
-  return mode === 'FM' ? { minHz: 0, maxHz: 98_000 } : { minHz: 0, maxHz: 4_500 };
+const defaultIfBandForMode = (mode: DemodMode): { minHz: number; maxHz: number } => {
+  if (mode === 'FM') return { minHz: 0, maxHz: 98_000 };
+  if (mode === 'USB' || mode === 'LSB') return { minHz: 300, maxHz: 3_200 };
+  return { minHz: 0, maxHz: 4_500 };
 };
 
 const maxSpanHz = maxHackRFSampleRate;
