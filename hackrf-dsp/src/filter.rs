@@ -67,17 +67,14 @@ pub struct FirFilter {
 /// 複素サンプル向け FIR フィルタ。
 /// 実係数を I/Q に同時適用する（I/Q を別々の FirFilter で回すのと等価）。
 pub struct ComplexFirFilter {
-    coeffs: Vec<f32>,
+    coeffs: ComplexFirCoeffs,
     delay: Vec<Complex<f32>>,
     pos: usize,
 }
 
-/// 複素係数・複素サンプル向け FIR フィルタ。
-/// 片側帯域抽出のような複素周波数応答が必要な場合に使う。
-pub struct ComplexCoeffFirFilter {
-    coeffs: Vec<Complex<f32>>,
-    delay: Vec<Complex<f32>>,
-    pos: usize,
+enum ComplexFirCoeffs {
+    Real(Vec<f32>),
+    Complex(Vec<Complex<f32>>),
 }
 
 impl FirFilter {
@@ -124,47 +121,16 @@ impl ComplexFirFilter {
         let coeffs = design_lowpass_coeffs(num_taps, cutoff_norm);
         Self {
             delay: vec![Complex::new(0.0, 0.0); num_taps],
-            coeffs,
+            coeffs: ComplexFirCoeffs::Real(coeffs),
             pos: 0,
         }
     }
 
-    pub fn reset(&mut self) {
-        self.delay.fill(Complex::new(0.0, 0.0));
-        self.pos = 0;
-    }
-
-    pub fn process_sample(&mut self, x: Complex<f32>) -> Complex<f32> {
-        self.delay[self.pos] = x;
-
-        let mut acc_re = 0.0f32;
-        let mut acc_im = 0.0f32;
-        let mut idx = self.pos;
-        for &h in &self.coeffs {
-            let s = self.delay[idx];
-            acc_re += h * s.re;
-            acc_im += h * s.im;
-            idx = if idx == 0 {
-                self.delay.len() - 1
-            } else {
-                idx - 1
-            };
-        }
-
-        self.pos += 1;
-        if self.pos >= self.delay.len() {
-            self.pos = 0;
-        }
-        Complex::new(acc_re, acc_im)
-    }
-}
-
-impl ComplexCoeffFirFilter {
-    pub fn new(coeffs: Vec<Complex<f32>>) -> Self {
+    pub fn new_complex_coeffs(coeffs: Vec<Complex<f32>>) -> Self {
         assert!(!coeffs.is_empty(), "coeffs must not be empty");
         let taps = coeffs.len();
         Self {
-            coeffs,
+            coeffs: ComplexFirCoeffs::Complex(coeffs),
             delay: vec![Complex::new(0.0, 0.0); taps],
             pos: 0,
         }
@@ -181,15 +147,31 @@ impl ComplexCoeffFirFilter {
         let mut acc_re = 0.0f32;
         let mut acc_im = 0.0f32;
         let mut idx = self.pos;
-        for &h in &self.coeffs {
-            let s = self.delay[idx];
-            acc_re += h.re * s.re - h.im * s.im;
-            acc_im += h.re * s.im + h.im * s.re;
-            idx = if idx == 0 {
-                self.delay.len() - 1
-            } else {
-                idx - 1
-            };
+        match &self.coeffs {
+            ComplexFirCoeffs::Real(coeffs) => {
+                for &h in coeffs {
+                    let s = self.delay[idx];
+                    acc_re += h * s.re;
+                    acc_im += h * s.im;
+                    idx = if idx == 0 {
+                        self.delay.len() - 1
+                    } else {
+                        idx - 1
+                    };
+                }
+            }
+            ComplexFirCoeffs::Complex(coeffs) => {
+                for &h in coeffs {
+                    let s = self.delay[idx];
+                    acc_re += h.re * s.re - h.im * s.im;
+                    acc_im += h.re * s.im + h.im * s.re;
+                    idx = if idx == 0 {
+                        self.delay.len() - 1
+                    } else {
+                        idx - 1
+                    };
+                }
+            }
         }
 
         self.pos += 1;

@@ -6,13 +6,13 @@ mod fft;
 mod filter;
 mod resample;
 
+use num_complex::Complex;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use std::arch::wasm32::{
-    f32x4_add, f32x4_convert_i32x4, f32x4_mul, f32x4_splat, f32x4_sub,
-    i16x8_extend_high_i8x16, i16x8_extend_low_i8x16, i32x4_extend_high_i16x8,
-    i32x4_extend_low_i16x8, i32x4_shuffle, v128, v128_load, v128_store,
+    f32x4_add, f32x4_convert_i32x4, f32x4_mul, f32x4_splat, f32x4_sub, i16x8_extend_high_i8x16,
+    i16x8_extend_low_i8x16, i32x4_extend_high_i16x8, i32x4_extend_low_i16x8, i32x4_shuffle, v128,
+    v128_load, v128_store,
 };
-use num_complex::Complex;
 use wasm_bindgen::prelude::*;
 
 use crate::demod::{
@@ -22,6 +22,15 @@ use crate::demod::{
 use crate::fft::FFT;
 use crate::filter::DecimationFilter;
 use crate::resample::Resampler;
+
+#[doc(hidden)]
+pub mod bench_filter {
+    pub use crate::filter::ComplexFirFilter;
+
+    pub fn design_lowpass_hamming_coeffs(num_taps: usize, cutoff_norm: f32) -> Vec<f32> {
+        crate::filter::design_lowpass_hamming_coeffs(num_taps, cutoff_norm)
+    }
+}
 
 /// FM の最大周波数偏移 [Hz]。WFM（ワイドFM放送）想定。
 const FM_MAX_DEVIATION_HZ: f32 = 75_000.0;
@@ -571,7 +580,9 @@ impl Receiver {
             return Err(JsValue::from_str("max_audio_samples must be > 0"));
         }
         if max_fft_bins < self.fft_visible_len {
-            return Err(JsValue::from_str("max_fft_bins is smaller than visible FFT bins"));
+            return Err(JsValue::from_str(
+                "max_fft_bins is smaller than visible FFT bins",
+            ));
         }
 
         self.io_iq_buffer = vec![0; max_iq_bytes];
@@ -589,7 +600,8 @@ impl Receiver {
         self.stereo_left_buffer.reserve(max_demod);
         self.stereo_right_buffer.reserve(max_demod);
         self.audio_left_resampled.reserve(max_audio_samples / 2 + 2);
-        self.audio_right_resampled.reserve(max_audio_samples / 2 + 2);
+        self.audio_right_resampled
+            .reserve(max_audio_samples / 2 + 2);
         self.audio_buffer.reserve(max_audio_samples);
         Ok(())
     }
@@ -656,7 +668,10 @@ impl Receiver {
     /// `alloc_io_buffers` で確保したI/Qバッファ先頭 `iq_len` バイトを入力として処理する。
     /// `want_fft` が false の場合は FFT 更新をスキップする。
     pub fn process_iq_len(&mut self, iq_len: usize, want_fft: bool) -> Result<usize, JsValue> {
-        if self.io_iq_buffer.is_empty() || self.io_audio_buffer.is_empty() || self.io_fft_buffer.is_empty() {
+        if self.io_iq_buffer.is_empty()
+            || self.io_audio_buffer.is_empty()
+            || self.io_fft_buffer.is_empty()
+        {
             return Err(JsValue::from_str("io buffers are not allocated"));
         }
         if iq_len == 0 || (iq_len & 1) != 0 {
@@ -673,7 +688,9 @@ impl Receiver {
         self.process_internal(iq_slice, want_fft);
 
         if self.audio_buffer.len() > self.io_audio_buffer.len() {
-            return Err(JsValue::from_str("audio output exceeds io_audio_buffer capacity"));
+            return Err(JsValue::from_str(
+                "audio output exceeds io_audio_buffer capacity",
+            ));
         }
 
         let audio_len = self.audio_buffer.len();
@@ -682,7 +699,9 @@ impl Receiver {
         }
         if want_fft {
             if self.fft_visible_buffer.len() > self.io_fft_buffer.len() {
-                return Err(JsValue::from_str("fft output exceeds io_fft_buffer capacity"));
+                return Err(JsValue::from_str(
+                    "fft output exceeds io_fft_buffer capacity",
+                ));
             }
             let fft_len = self.fft_visible_buffer.len();
             if fft_len > 0 {
@@ -694,7 +713,12 @@ impl Receiver {
 
     /// 1ブロックのIQデータ(i8型)を受け取り、指定バッファへ結果を書き込む。
     /// 返り値は `audio_out` に有効に書き込まれたサンプル数。
-    pub fn process_into(&mut self, iq_data: &[i8], audio_out: &mut [f32], fft_out: &mut [f32]) -> usize {
+    pub fn process_into(
+        &mut self,
+        iq_data: &[i8],
+        audio_out: &mut [f32],
+        fft_out: &mut [f32],
+    ) -> usize {
         self.process_internal(iq_data, true);
 
         let audio_len = self.audio_buffer.len().min(audio_out.len());
@@ -709,7 +733,6 @@ impl Receiver {
 
         audio_len
     }
-
 }
 
 impl Receiver {
@@ -743,7 +766,10 @@ impl Receiver {
 
         for out_idx in idx..num_samples {
             let base = out_idx * 2;
-            let sample = Complex::new(iq_data[base] as f32 / 128.0, iq_data[base + 1] as f32 / 128.0);
+            let sample = Complex::new(
+                iq_data[base] as f32 / 128.0,
+                iq_data[base + 1] as f32 / 128.0,
+            );
             let nco_val = self.nco.step();
             self.baseband_buffer[out_idx] = sample * nco_val;
         }
@@ -832,7 +858,8 @@ impl Receiver {
                     self.resampler
                         .process(&self.demod_buffer, &mut self.audio_left_resampled);
                     self.audio_buffer.clear();
-                    self.audio_buffer.reserve(self.audio_left_resampled.len() * 2);
+                    self.audio_buffer
+                        .reserve(self.audio_left_resampled.len() * 2);
                     for &sample in &self.audio_left_resampled {
                         self.audio_buffer.push(sample);
                         self.audio_buffer.push(sample);
@@ -1074,7 +1101,13 @@ mod tests {
         // n=15 -> dc=7, overwritten range 5..=9, endpoints idx4=-50 idx10=-40
         let expected = [-48.333332, -46.666668, -45.0, -43.333332, -41.666668];
         for (idx, exp) in (5usize..=9).zip(expected.iter()) {
-            assert!((bins[idx] - exp).abs() < 1e-4, "idx={} got={} expected={}", idx, bins[idx], exp);
+            assert!(
+                (bins[idx] - exp).abs() < 1e-4,
+                "idx={} got={} expected={}",
+                idx,
+                bins[idx],
+                exp
+            );
         }
     }
 
@@ -1126,7 +1159,10 @@ mod tests {
             "stereo blend too low: {}",
             stats.fm_stereo_blend()
         );
-        assert!(stats.fm_stereo_locked(), "stereo did not lock in e2e pipeline");
+        assert!(
+            stats.fm_stereo_locked(),
+            "stereo did not lock in e2e pipeline"
+        );
 
         let (left, right) = split_stereo_interleaved(&audio);
         assert!(left.len() > 8_000, "too few audio samples: {}", left.len());
@@ -1179,10 +1215,22 @@ mod tests {
         let lw = &left_w[skip_w..];
         let rw = &right_w[skip_w..];
 
-        let sep_n_l = separation_db(tone_amp(ln, 48_000.0, 9_000.0), tone_amp(ln, 48_000.0, 11_000.0));
-        let sep_n_r = separation_db(tone_amp(rn, 48_000.0, 11_000.0), tone_amp(rn, 48_000.0, 9_000.0));
-        let sep_w_l = separation_db(tone_amp(lw, 48_000.0, 9_000.0), tone_amp(lw, 48_000.0, 11_000.0));
-        let sep_w_r = separation_db(tone_amp(rw, 48_000.0, 11_000.0), tone_amp(rw, 48_000.0, 9_000.0));
+        let sep_n_l = separation_db(
+            tone_amp(ln, 48_000.0, 9_000.0),
+            tone_amp(ln, 48_000.0, 11_000.0),
+        );
+        let sep_n_r = separation_db(
+            tone_amp(rn, 48_000.0, 11_000.0),
+            tone_amp(rn, 48_000.0, 9_000.0),
+        );
+        let sep_w_l = separation_db(
+            tone_amp(lw, 48_000.0, 9_000.0),
+            tone_amp(lw, 48_000.0, 11_000.0),
+        );
+        let sep_w_r = separation_db(
+            tone_amp(rw, 48_000.0, 11_000.0),
+            tone_amp(rw, 48_000.0, 9_000.0),
+        );
         let sep_n = 0.5 * (sep_n_l + sep_n_r);
         let sep_w = 0.5 * (sep_w_l + sep_w_r);
 

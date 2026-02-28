@@ -1,5 +1,5 @@
+use crate::filter::{design_lowpass_hamming_coeffs, ComplexFirFilter};
 use num_complex::Complex;
-use crate::filter::{ComplexCoeffFirFilter, design_lowpass_hamming_coeffs};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SSBMode {
@@ -37,7 +37,7 @@ pub struct SSBDemodulator {
     if_min_hz: f32,
     if_max_hz: f32,
     fir_taps: usize,
-    sideband_filter: ComplexCoeffFirFilter,
+    sideband_filter: ComplexFirFilter,
     hp_prev_x: f32,
     hp_prev_y: f32,
     hp_a: f32,
@@ -53,13 +53,8 @@ impl SSBDemodulator {
         let if_min_hz = 300.0f32;
         let if_max_hz = 3_000.0f32;
         let fir_taps = 129usize;
-        let sideband_filter = Self::build_sideband_filter(
-            sample_rate_hz,
-            mode,
-            if_min_hz,
-            if_max_hz,
-            fir_taps,
-        );
+        let sideband_filter =
+            Self::build_sideband_filter(sample_rate_hz, mode, if_min_hz, if_max_hz, fir_taps);
         Self {
             sample_rate_hz,
             mode,
@@ -83,7 +78,7 @@ impl SSBDemodulator {
         if_min_hz: f32,
         if_max_hz: f32,
         fir_taps: usize,
-    ) -> ComplexCoeffFirFilter {
+    ) -> ComplexFirFilter {
         let min_hz = if_min_hz.max(20.0);
         let max_hz = if_max_hz.max(min_hz + 50.0);
         let center_hz = 0.5 * (min_hz + max_hz);
@@ -98,7 +93,7 @@ impl SSBDemodulator {
             signed_center_hz,
             bandwidth_hz,
         );
-        ComplexCoeffFirFilter::new(coeffs)
+        ComplexFirFilter::new_complex_coeffs(coeffs)
     }
 
     pub fn set_mode(&mut self, mode: SSBMode) {
