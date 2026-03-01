@@ -35,7 +35,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,wasm-pack
+          tool: cargo-make,wasm-pack,wasm-bindgen
 
 
       - name: Cache Rust cargo

@@ -22,14 +22,27 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,wasm-pack
+          tool: cargo-make,wasm-pack,wasm-bindgen
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Cache dependencies
+      - name: Cache Rust cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('hackrf-dsp/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Node dependencies
         uses: actions/cache@v4
         with:
           path: node_modules
@@ -40,9 +53,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Build WASM
+        run: npm run build:wasm
 
       - name: Run tests
+        run: npm test -- --reporter=verbose
+
+      - name: Run Rust tests
         run: cargo test
-        
