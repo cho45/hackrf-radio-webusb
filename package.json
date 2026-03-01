@@ -23,7 +23,7 @@
     "vue": "^3.5.25"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
+    "@types/node": "^25.3.3",
     "@types/w3c-web-usb": "^1.0.13",
     "@vitejs/plugin-vue": "^6.0.2",
     "@vue/test-utils": "^2.4.6",
