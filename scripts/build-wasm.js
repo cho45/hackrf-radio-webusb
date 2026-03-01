@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,16 +38,26 @@ const run = (cmd, args, extraEnv = {}) => {
 };
 
 const buildFlavor = (f) => {
+	const cargoBin = path.join(process.env.HOME || "", ".cargo", "bin");
+	const wasmPack = path.join(cargoBin, "wasm-pack");
+
+	// Check if wasm-pack exists
+	if (!fs.existsSync(wasmPack)) {
+		console.error(`Error: wasm-pack not found at ${wasmPack}`);
+		console.error(`Make sure wasm-pack is installed. Try: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh`);
+		process.exit(1);
+	}
+
 	const args = ["build", "--target", "web", "--out-dir", f === "base" ? "pkg" : "pkg-simd", "--mode", mode];
 	if (noOpt) {
 		args.push("--no-opt");
 	}
 	if (f === "simd") {
 		const rustflags = [process.env.RUSTFLAGS, "-C target-feature=+simd128"].filter(Boolean).join(" ");
-		run("wasm-pack", args, { RUSTFLAGS: rustflags });
+		run(wasmPack, args, { RUSTFLAGS: rustflags, PATH: `${cargoBin}:${process.env.PATH}` });
 		return;
 	}
-	run("wasm-pack", args);
+	run(wasmPack, args, { PATH: `${cargoBin}:${process.env.PATH}` });
 };
 
 console.log(`[build-wasm] flavor=${flavor} no_opt=${noOpt} mode=${mode}`);

@@ -63,7 +63,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build:full
+        run: export PATH="$HOME/.cargo/bin:$PATH" && WASM_MODE=normal npm run build:full
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

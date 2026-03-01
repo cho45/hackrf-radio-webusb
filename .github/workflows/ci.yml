@@ -53,11 +53,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cargo Test
+        run: cd hackrf-dsp && cargo test --locked
+
       - name: Build WASM
-        run: npm run build:wasm
+        run: export PATH="$HOME/.cargo/bin:$PATH" && WASM_MODE=normal npm run build:wasm
 
       - name: Run tests
         run: npm test -- --reporter=verbose
-
-      - name: Run Rust tests
-        run: cargo test
